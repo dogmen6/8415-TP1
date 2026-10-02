@@ -1,0 +1,5 @@
+*.pem
+.aws/
+.env
+__pycache__/
+.venv/
