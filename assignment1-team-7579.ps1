@@ -29,37 +29,42 @@ function Write-Section($Message) {
     Write-Host "===== $Message =====" -ForegroundColor Cyan
 }
 
-function Get-InstanceCount($Name) {
-    $value = aws ec2 describe-instances `
-        --filters `
-            "Name=tag:Name,Values=$Name" `
-            "Name=instance-state-name,Values=pending,running,stopping,stopped" `
-        --region $Region `
-        --query "length(Reservations[].Instances[])" `
-        --output text
-
-    if ([string]::IsNullOrWhiteSpace($value) -or $value -eq "None") {
-        return 0
-    }
-
-    return [int]$value
-}
-
 function Get-Instances($Name) {
-    $json = aws ec2 describe-instances `
+
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    $json = & aws ec2 describe-instances `
         --filters `
             "Name=tag:Name,Values=$Name" `
             "Name=instance-state-name,Values=pending,running,stopping,stopped" `
         --region $Region `
         --query "Reservations[].Instances[].{Id:InstanceId,State:State.Name,IP:PublicIpAddress,PrivateIP:PrivateIpAddress}" `
-        --output json
+        --output json 2>&1
 
-    if ([string]::IsNullOrWhiteSpace($json)) {
+    $exitCode = $LASTEXITCODE
+
+    $ErrorActionPreference = $oldErrorActionPreference
+
+    if ($exitCode -ne 0) {
+        throw ($json -join "`n")
+    }
+
+    $jsonText = ($json -join "`n").Trim()
+
+    if ([string]::IsNullOrWhiteSpace($jsonText) -or $jsonText -eq "[]") {
         return @()
     }
 
-    return @($json | ConvertFrom-Json | Sort-Object Id)
+    $objects = $jsonText | ConvertFrom-Json
+
+    if ($null -eq $objects) {
+        return @()
+    }
+
+    return @($objects | Sort-Object -Property Id)
 }
+
 
 function Wait-ForRunningInstances($Name, $ExpectedCount) {
 
@@ -92,13 +97,20 @@ function Wait-ForRunningInstances($Name, $ExpectedCount) {
 }
 
 function Ensure-SecurityGroup {
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
     $groupId = aws ec2 describe-security-groups `
         --group-names $SecurityGroupName `
         --region $Region `
         --query "SecurityGroups[0].GroupId" `
         --output text 2>$null
 
-    if ([string]::IsNullOrWhiteSpace($groupId) -or $groupId -eq "None") {
+    $exitCode = $LASTEXITCODE
+
+    $ErrorActionPreference = $oldErrorActionPreference
+
+    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($groupId) -or $groupId -eq "None") {
 
         $groupId = (aws ec2 create-security-group `
             --group-name $SecurityGroupName `
@@ -109,7 +121,6 @@ function Ensure-SecurityGroup {
 
         Write-Host "[CREATE] Security Group $groupId"
 
-        # SSH - port 22
         aws ec2 authorize-security-group-ingress `
             --group-id $groupId `
             --protocol tcp `
@@ -117,7 +128,6 @@ function Ensure-SecurityGroup {
             --cidr 0.0.0.0/0 `
             --region $Region | Out-Null
 
-        # FastAPI - port 8000
         aws ec2 authorize-security-group-ingress `
             --group-id $groupId `
             --protocol tcp `
@@ -133,27 +143,41 @@ function Ensure-SecurityGroup {
 }
 
 function Ensure-KeyPair {
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
     $exists = aws ec2 describe-key-pairs `
         --key-names $KeyName `
         --region $Region `
         --query "KeyPairs[0].KeyName" `
         --output text 2>$null
 
-    if ($exists -eq "None" -or [string]::IsNullOrWhiteSpace($exists)) {
+    $exitCode = $LASTEXITCODE
+
+    $ErrorActionPreference = $oldErrorActionPreference
+
+    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($exists) -or $exists -eq "None") {
+
         Write-Host "[CREATE] Key pair $KeyName"
+
         aws ec2 create-key-pair `
             --key-name $KeyName `
             --query "KeyMaterial" `
             --output text `
-            --region $Region | Out-File -Encoding ascii $KeyPath
+            --region $Region |
+            Out-File -Encoding ascii $KeyPath
+
     }
     else {
+
         Write-Host "[REUSE] Key pair $KeyName"
+
+        if (-not (Test-Path $KeyPath)) {
+            throw "La Key Pair AWS existe, mais le fichier PEM est absent: $KeyPath"
+        }
     }
 
-    if (-not (Test-Path $KeyPath)) {
-        throw "AWS key pair exists but $KeyPath is missing. AWS cannot recover the private key."
-    }
+    return $KeyName
 }
 
 function Ensure-Instances {
@@ -178,7 +202,7 @@ function Ensure-Instances {
 
     # Security Group + Key Pair
     $SecurityGroupId = Ensure-SecurityGroup
-    Ensure-KeyPair
+    $null = Ensure-KeyPair
 
     # ============================================================
     # CLUSTER 1 - 5 x t3.micro
@@ -285,25 +309,23 @@ function Ensure-Instances {
     # ATTENDRE QUE LES 9 INSTANCES SOIENT RUNNING
     # ============================================================
 
-    Write-Host ""
+   Write-Host ""
     Write-Host "Waiting for Cluster 1..."
-    Wait-ForRunningInstances $Cluster1Name 5
+    $null = Wait-ForRunningInstances $Cluster1Name 5
 
     Write-Host ""
     Write-Host "Waiting for Cluster 2..."
-    Wait-ForRunningInstances $Cluster2Name 4
-
-    # ============================================================
-    # RÉCUPÉRER LES INSTANCES FINALES
-    # ============================================================
+    $null = Wait-ForRunningInstances $Cluster2Name 4
 
     $FinalCluster1 = Get-Instances $Cluster1Name
     $FinalCluster2 = Get-Instances $Cluster2Name
 
-    return @(
-        $FinalCluster1
-        $FinalCluster2
-    )
+    $AllInstances = @()
+
+    $AllInstances += @($FinalCluster1)
+    $AllInstances += @($FinalCluster2)
+    
+    return $AllInstances
 }
 
 function Ensure-FastAPI($Instances) {
@@ -316,14 +338,11 @@ function Ensure-FastAPI($Instances) {
     $instanceNumber = 1
 
     foreach ($instance in $Instances) {
+        $id = $instance.Id
         $ip = $instance.IP
 
-        if ([string]::IsNullOrWhiteSpace($ip)) {
-            throw "Instance $($instance.Id) has no public IP."
-        }
-
-        Write-Host "[$instanceNumber/9] Checking $($instance.Id) ($ip)..."
-
+        Write-Host "[$instanceNumber/9] Checking $id ($ip)..."
+        
         # Install OS packages and Python environment. This does not recreate the EC2.
         ssh -o StrictHostKeyChecking=no -i $KeyPath "ec2-user@$ip" `
             "sudo dnf install -y python3 python3-pip; test -d /home/ec2-user/venv || python3 -m venv /home/ec2-user/venv; /home/ec2-user/venv/bin/pip install fastapi 'uvicorn[standard]'" `
@@ -450,7 +469,7 @@ function Run-Benchmark($BaseUrl, $Label) {
 # ============================================================
 
 if ($LoadBalancer -eq "none" -and $Benchmark -eq "none") {
-    $instances = Ensure-Instances
+    $instances = @(Ensure-Instances)
     Ensure-FastAPI $instances
 
     Write-Host ""
@@ -459,7 +478,7 @@ if ($LoadBalancer -eq "none" -and $Benchmark -eq "none") {
 }
 
 if ($LoadBalancer -ne "none") {
-    $instances = Ensure-Instances
+    $instances = @(Ensure-Instances)
     Ensure-FastAPI $instances
 
     if ($LoadBalancer -eq "alb") {

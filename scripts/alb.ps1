@@ -288,17 +288,30 @@ function Get-OrCreate-Alb {
         [string]$SecurityGroupId
     )
 
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
     $existing = & aws elbv2 describe-load-balancers `
         --region $Region `
         --names $AlbName `
-        --output json 2>$null
+        --output json 2>&1
 
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($existing -join ""))) {
-        $json = ($existing -join "`n") | ConvertFrom-Json
+    $exitCode = $LASTEXITCODE
 
-        if ($json.LoadBalancers.Count -gt 0) {
-            Write-Host "[REUSE] ALB: $AlbName"
-            return $json.LoadBalancers[0]
+    $ErrorActionPreference = $oldErrorActionPreference
+
+    if ($exitCode -eq 0) {
+
+        $jsonText = ($existing -join "`n").Trim()
+
+        if (-not [string]::IsNullOrWhiteSpace($jsonText)) {
+
+            $json = $jsonText | ConvertFrom-Json
+
+            if ($json.LoadBalancers.Count -gt 0) {
+                Write-Host "[REUSE] ALB: $AlbName" -ForegroundColor Green
+                return $json.LoadBalancers[0]
+            }
         }
     }
 
