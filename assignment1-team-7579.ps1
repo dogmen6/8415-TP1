@@ -368,6 +368,9 @@ function Ensure-FastAPI($Instances) {
             | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Failed to copy main.py to $id." }
 
+        # Instances 1-5 belong to cluster 1 (t3.micro), 6-9 to cluster 2 (m7g.large),
+        # because Ensure-Instances returns cluster 1 first.
+        $cluster = if ($instanceNumber -le 5) { "1" } else { "2" }
         $serviceContent = @"
 [Unit]
 Description=LOG8415E FastAPI Application
@@ -378,6 +381,7 @@ User=ec2-user
 WorkingDirectory=/home/ec2-user
 Environment="TEAM_SEED=$TeamSeed"
 Environment="INSTANCE_NUMBER=$instanceNumber"
+Environment="CLUSTER=$cluster"
 ExecStart=/home/ec2-user/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=2
