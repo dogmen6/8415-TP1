@@ -484,6 +484,46 @@ function Wait-ForHealthyTargets {
 }
 
 
+function Test-AlbRouting {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Url
+    )
+
+    # each route must only answer from its own cluster:
+    # Instances 1-5 are cluster 1 (t3.micro), instances 6-9 are cluster 2 (m7g.large).
+    $expected = @{
+        "cluster1" = 1..5
+        "cluster2" = 6..9
+    }
+
+    Write-Host ""
+    Write-Host "Verifying ALB routing..."
+
+    foreach ($route in "cluster1", "cluster2") {
+        $seen = @{}
+
+        for ($i = 1; $i -le 30; $i++) {
+            $response = Invoke-RestMethod -Uri "$Url/$route"
+
+            if ($response.message -match "Instance number (\d+)") {
+                $seen[[int]$Matches[1]] = $true
+            }
+        }
+
+        $numbers = @($seen.Keys | Sort-Object)
+        Write-Host "  /$route answered from instances: $($numbers -join ', ')"
+
+        foreach ($n in $numbers) {
+            if ($n -notin $expected[$route]) {
+                throw "/$route was answered by instance $n, which is not in $route."
+            }
+        }
+    }
+
+    Write-Host "[OK] Each route only answers from its own cluster" -ForegroundColor Green
+}
+
 function Main {
     Write-Host "=========================================="
     Write-Host " AWS APPLICATION LOAD BALANCER"
@@ -541,6 +581,9 @@ function Main {
 
     # 10. URL
     $url = "http://$($alb.DNSName)"
+    
+    # 11. Verify path-based routing (step 19)
+    Test-AlbRouting $url
 
     Write-Host ""
     Write-Host "=========================================="
