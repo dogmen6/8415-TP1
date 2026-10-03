@@ -366,6 +366,7 @@ function Ensure-FastAPI($Instances) {
         scp -o StrictHostKeyChecking=no -i $KeyPath `
             $MainPyPath "ec2-user@${ip}:/home/ec2-user/main.py" `
             | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to copy main.py to $id." }
 
         $serviceContent = @"
 [Unit]
@@ -391,10 +392,12 @@ WantedBy=multi-user.target
         scp -o StrictHostKeyChecking=no -i $KeyPath `
             $tempService "ec2-user@${ip}:/tmp/fastapi.service" `
             | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to copy the systemd service to $id." }
 
         ssh -o StrictHostKeyChecking=no -i $KeyPath "ec2-user@$ip" `
             "sudo mv /tmp/fastapi.service /etc/systemd/system/fastapi.service; sudo systemctl daemon-reload; sudo systemctl enable fastapi; sudo systemctl restart fastapi" `
             | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to start the FastAPI service on $id." }
 
         $status = ssh -o StrictHostKeyChecking=no -i $KeyPath `
             "ec2-user@$ip" "systemctl is-active fastapi" 2>$null
