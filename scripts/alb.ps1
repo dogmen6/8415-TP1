@@ -64,6 +64,7 @@ function Get-RunningInstances {
             $instances += [PSCustomObject]@{
                 Id        = $instance.InstanceId
                 VpcId     = $instance.VpcId
+                SubnetId  = $instance.SubnetId
                 PrivateIp = $instance.PrivateIpAddress
                 PublicIp  = $instance.PublicIpAddress
             }
@@ -88,40 +89,30 @@ function Get-VpcId {
 }
 
 
-function Get-Subnets {
+function Get-AlbSubnets {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$VpcId
+        [Parameter(Mandatory = $true)] $Instances,
+        [Parameter(Mandatory = $true)] [string]$VpcId
     )
+
+    $subnetIds = @($Instances | ForEach-Object { $_.SubnetId } | Sort-Object -Unique)
+
+    if ($subnetIds.Count -ge 2) {
+        return $subnetIds
+    }
 
     $result = Invoke-AwsJson @(
         "ec2", "describe-subnets",
-        "--filters",
-        "Name=vpc-id,Values=$VpcId",
+        "--filters", "Name=vpc-id,Values=$VpcId", "Name=default-for-az,Values=true",
         "--output", "json"
     )
+    $extra = $result.Subnets | Where-Object { $_.SubnetId -notin $subnetIds } | Select-Object -First 1
 
-    $selected = @()
-    $usedAzs = @{}
-
-    foreach ($subnet in $result.Subnets) {
-        $az = $subnet.AvailabilityZone
-
-        if (-not $usedAzs.ContainsKey($az)) {
-            $selected += $subnet.SubnetId
-            $usedAzs[$az] = $true
-        }
-
-        if ($selected.Count -eq 2) {
-            break
-        }
+    if ($null -eq $extra) {
+        throw "Impossible de trouver un deuxième subnet pour l'ALB."
     }
 
-    if ($selected.Count -lt 2) {
-        throw "Impossible de trouver deux subnets dans deux Availability Zones différentes."
-    }
-
-    return $selected
+    return $subnetIds + $extra.SubnetId
 }
 
 
@@ -310,6 +301,12 @@ function Get-OrCreate-Alb {
 
             if ($json.LoadBalancers.Count -gt 0) {
                 Write-Host "[REUSE] ALB: $AlbName" -ForegroundColor Green
+
+                & aws elbv2 set-subnets --region $Region `
+                    --load-balancer-arn $json.LoadBalancers[0].LoadBalancerArn `
+                    --subnets $Subnets 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "Impossible de mettre à jour les subnets de l'ALB." }
+
                 return $json.LoadBalancers[0]
             }
         }
@@ -502,7 +499,8 @@ function Main {
 
     # 2. VPC + subnets
     $vpcId = Get-VpcId $cluster1
-    $subnets = @(Get-Subnets $vpcId)
+    $allInstances = @($cluster1) + @($cluster2)
+    $subnets = @(Get-AlbSubnets $allInstances $vpcId)
 
     Write-Host "[OK] VPC: $vpcId"
     Write-Host "[OK] Subnets: $($subnets -join ', ')"
