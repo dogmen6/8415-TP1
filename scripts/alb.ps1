@@ -88,7 +88,7 @@ function Get-VpcId {
     return $Instances[0].VpcId
 }
 
-
+# ALB must be enabled in every AZ that hosts a target otherwise never receive traffic.
 function Get-AlbSubnets {
     param(
         [Parameter(Mandatory = $true)] $Instances,
@@ -251,6 +251,7 @@ function Register-Targets {
         $targets += "Id=$($instance.Id),Port=$InstancePort"
     }
 
+    # $args is a PowerShell automatic variable so use our own name instead
     $awsArgs = @(
         "elbv2", "register-targets",
         "--target-group-arn", $TargetGroupArn,
@@ -455,6 +456,7 @@ function Wait-ForHealthyTargets {
             "--output", "json"
         )
 
+        # to show why a target is not healthy yet 
         $healthy = @(
             $result.TargetHealthDescriptions |
             Where-Object {
