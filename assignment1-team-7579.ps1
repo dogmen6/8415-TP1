@@ -326,6 +326,17 @@ function Ensure-Instances {
 
     $AllInstances += @($FinalCluster1)
     $AllInstances += @($FinalCluster2)
+
+    # wait for the EC2 status checks to pass:
+    # before Ensure-FastAPI connects to the instances.
+    Write-Host ""
+    Write-Host "Waiting for instance status checks (can take 2-3 minutes)..."
+    $ids = @($AllInstances | ForEach-Object { $_.Id })
+    aws ec2 wait instance-status-ok --instance-ids $ids --region $Region
+    if ($LASTEXITCODE -ne 0) {
+        throw "Instances did not pass status checks."
+    }
+    Write-Host "[OK] All instances passed status checks" -ForegroundColor Green
     
     return $AllInstances
 }
