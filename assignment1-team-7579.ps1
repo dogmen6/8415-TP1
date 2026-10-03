@@ -477,13 +477,22 @@ function Get-CustomUrl {
 }
 
 function Run-Benchmark($BaseUrl, $Label) {
-    Write-Host ""
-    Write-Host "----- $Label /cluster1 -----" -ForegroundColor Yellow
-    python $BenchmarkScript "$BaseUrl/cluster1"
+    # Each run is saved as results/<label>-<route>.json (e.g. results/alb-cluster1.json)
+    # so the report and the CloudWatch script can reuse it.
+    $resultsDir = Join-Path $PSScriptRoot "results"
+    New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 
-    Write-Host ""
-    Write-Host "----- $Label /cluster2 -----" -ForegroundColor Yellow
-    python $BenchmarkScript "$BaseUrl/cluster2"
+    foreach ($route in "cluster1", "cluster2") {
+        Write-Host ""
+        Write-Host "----- $Label /$route -----" -ForegroundColor Yellow
+
+        $outputFile = Join-Path $resultsDir "$Label-$route.json"
+        python $BenchmarkScript "$BaseUrl/$route" $outputFile
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Benchmark failed for $Label /$route."
+        }
+    }
 }
 
 # ============================================================
@@ -523,12 +532,12 @@ if ($LoadBalancer -ne "none") {
 if ($Benchmark -ne "none") {
     if ($Benchmark -eq "alb") {
         $albUrl = Get-AlbUrl
-        Run-Benchmark $albUrl "AWS ALB"
+        Run-Benchmark $albUrl "alb"
     }
     elseif ($Benchmark -eq "custom") {
         Start-CustomLoadBalancer
         $customUrl = Get-CustomUrl
-        Run-Benchmark $customUrl "Custom LB"
+        Run-Benchmark $customUrl "custom"
     }
 }
 
