@@ -251,13 +251,13 @@ function Register-Targets {
         $targets += "Id=$($instance.Id),Port=$InstancePort"
     }
 
-    $args = @(
+    $awsArgs = @(
         "elbv2", "register-targets",
         "--target-group-arn", $TargetGroupArn,
         "--targets"
     ) + $targets
 
-    & aws @args --region $Region 2>&1 | Out-Null
+    & aws @awsArgs --region $Region 2>&1 | Out-Null
 
     if ($LASTEXITCODE -ne 0) {
         throw "Impossible d'enregistrer les targets dans $TargetGroupArn."
@@ -312,7 +312,7 @@ function Get-OrCreate-Alb {
         }
     }
 
-    $args = @(
+    $awsArgs = @(
         "elbv2", "create-load-balancer",
         "--name", $AlbName,
         "--security-groups", $SecurityGroupId,
@@ -327,7 +327,7 @@ function Get-OrCreate-Alb {
         "--output", "json"
     )
 
-    $result = Invoke-AwsJson $args
+    $result = Invoke-AwsJson $awsArgs
     $alb = $result.LoadBalancers[0]
 
     Write-Host "[CREATE] ALB: $AlbName"
