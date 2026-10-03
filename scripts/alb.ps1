@@ -464,6 +464,12 @@ function Wait-ForHealthyTargets {
 
         Write-Host "  $healthy/$ExpectedCount healthy"
 
+        $result.TargetHealthDescriptions |
+            Where-Object { $_.TargetHealth.State -ne "healthy" } |
+            ForEach-Object {
+                Write-Host "    $($_.Target.Id): $($_.TargetHealth.State) ($($_.TargetHealth.Reason))"
+            }
+
         if ($healthy -ge $ExpectedCount) {
             Write-Host "[OK] All targets healthy"
             return
