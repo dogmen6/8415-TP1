@@ -356,10 +356,12 @@ function Ensure-FastAPI($Instances) {
 
         Write-Host "[$instanceNumber/9] Checking $id ($ip)..."
         
-        # Install OS packages and Python environment. This does not recreate the EC2.
+        # Update the OS, install Python and the app dependencies in a venv.
+        # "&&" stops at the first failing command, so a failure is not silently ignored.
         ssh -o StrictHostKeyChecking=no -i $KeyPath "ec2-user@$ip" `
-            "sudo dnf install -y python3 python3-pip; test -d /home/ec2-user/venv || python3 -m venv /home/ec2-user/venv; /home/ec2-user/venv/bin/pip install fastapi 'uvicorn[standard]'" `
+            "sudo dnf update -y && sudo dnf install -y python3 python3-pip && (test -d /home/ec2-user/venv || python3 -m venv /home/ec2-user/venv) && /home/ec2-user/venv/bin/pip install fastapi 'uvicorn[standard]'" `
             | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Package installation failed on $id." }
 
         scp -o StrictHostKeyChecking=no -i $KeyPath `
             $MainPyPath "ec2-user@${ip}:/home/ec2-user/main.py" `
