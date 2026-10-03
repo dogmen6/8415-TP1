@@ -214,9 +214,10 @@ function Ensure-Instances {
     $Cluster1Instances = Get-Instances $Cluster1Name
 
     # Garder uniquement running/stopped
+    # Count pending instances too to avoid duplicates
     $UsableCluster1 = @(
         $Cluster1Instances | Where-Object {
-            $_.State -eq "running" -or $_.State -eq "stopped"
+            $_.State -in "pending", "running", "stopped"
         }
     )
 
@@ -264,9 +265,10 @@ function Ensure-Instances {
 
     $Cluster2Instances = Get-Instances $Cluster2Name
 
+    # Same as cluster 1: pending instances count as usable
     $UsableCluster2 = @(
         $Cluster2Instances | Where-Object {
-            $_.State -eq "running" -or $_.State -eq "stopped"
+            $_.State -in "pending", "running", "stopped"
         }
     )
 
